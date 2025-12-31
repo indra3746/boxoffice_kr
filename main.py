@@ -10,7 +10,7 @@ from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
 def get_movie_report():
-    print("🎬 영화 데이터 정밀 수집 및 D-Day 계산 시작...")
+    print("🎬 영화 데이터 정밀 추출 엔진 가동...")
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
@@ -22,61 +22,61 @@ def get_movie_report():
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         
-        # 1. 예매량 데이터 수집 (Ticket Reservation Page)
+        # 1. 실시간 예매량 페이지 수집
+        print("🎫 1/2 예매량 수집 중 (25초 대기)...")
         driver.get("https://www.kobis.or.kr/kobis/business/stat/boxs/findRealTicketList.do")
-        time.sleep(20) #
+        time.sleep(25) # 예매 테이블은 로딩이 매우 느려 시간을 더 늘렸습니다.
         
         ticket_map = {}
         t_rows = driver.find_elements(By.CSS_SELECTOR, "#tbody_0 tr")
         for row in t_rows:
             cols = row.find_elements(By.TAG_NAME, "td")
             if len(cols) > 4:
-                clean_title = cols[1].text.split('\n')[0].strip().replace(" ", "").replace("(선택)", "")
-                ticket_map[clean_title] = cols[4].text.strip()
+                # 제목에서 공백과 (선택) 문구 제거
+                title_key = cols[1].text.split('\n')[0].strip().replace(" ", "").replace("(선택)", "")
+                # [4]번 칸이 '예매매수'입니다.
+                ticket_map[title_key] = cols[4].text.strip()
 
-        # 2. 박스오피스 순위 및 D-Day 수집
+        # 2. 박스오피스 당일/누적 관객수 수집
+        print("📊 2/2 박스오피스 관객수 수집 중...")
         driver.get("https://www.kobis.or.kr/kobis/business/stat/boxs/findDailyBoxOfficeList.do")
         time.sleep(15)
         
         kst = pytz.timezone('Asia/Seoul')
         today = datetime.now(kst).date()
+        final_data = []
         
-        final_list = []
         b_rows = driver.find_elements(By.CSS_SELECTOR, "#tbody_0 tr")
         for row in b_rows[:10]:
             cols = row.find_elements(By.TAG_NAME, "td")
-            if len(cols) > 8:
+            if len(cols) > 10:
+                # 정확한 인덱스 타격 (7번: 당일관객수, 10번: 누적관객수)
                 rank = cols[0].text.strip()
                 title = cols[1].text.split('\n')[0].strip()
                 open_date_str = cols[2].text.strip()
                 
-                # D-Day 계산 로직
+                # 당일 관객수(7번), 누적 관객수(10번)
+                daily_aud = cols[7].text.strip()
+                total_aud = cols[10].text.strip()
+                
+                # D+Day 계산
                 try:
                     open_date = datetime.strptime(open_date_str, "%Y-%m-%d").date()
-                    d_day = (today - open_date).days + 1 # 개봉 당일을 1일로 계산
+                    d_day = (today - open_date).days + 1
                     d_day_str = f"개봉 D+{d_day}"
-                except:
-                    d_day_str = "개봉일 미정"
-
-                daily_aud = cols[6].text.strip() #
-                total_aud = cols[8].text.strip() #
+                except: d_day_str = "개봉일 미정"
                 
+                # 제목 매칭
                 match_key = title.replace(" ", "").replace("(선택)", "")
                 ticket_val = ticket_map.get(match_key, "0")
                 
-                final_list.append({
-                    'rank': rank,
-                    'title': title,
-                    'open': open_date_str,
-                    'dday': d_day_str,
-                    'daily': daily_aud,
-                    'total': total_aud,
-                    'ticket': ticket_val
+                final_data.append({
+                    'rank': rank, 'title': title, 'open': open_date_str,
+                    'dday': d_day_str, 'daily': daily_aud, 'total': total_aud, 'ticket': ticket_val
                 })
-        return final_list
-
+        return final_data
     except Exception as e:
-        print(f"❌ 오류: {e}")
+        print(f"❌ 수집 중 오류: {e}")
         return []
     finally:
         if 'driver' in locals(): driver.quit()
@@ -87,25 +87,18 @@ def send_msg(content):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     requests.post(url, json={"chat_id": chat_id, "text": content})
 
-# 실행 및 리포트 구성
-movie_data = get_movie_report()
+# 실행부
+movie_list = get_movie_report()
 kst = pytz.timezone('Asia/Seoul')
 now_str = datetime.now(kst).strftime('%y.%m.%d %H시')
 
-if movie_data:
+if movie_list:
     report = f"🎬 일일 박스오피스 및 예매 현황({now_str} 기준)\n"
     report += "━━━━━━━━━━━━━━━━━━\n"
-    
-    for m in movie_data:
-        # 제목 라인: 1️⃣ 제목 / 개봉일: 2022-12-14(개봉 D+***)
+    for m in movie_list:
         report += f"{m['rank']}️⃣ {m['title']} / 개봉일: {m['open']}({m['dday']})\n"
-        # 상세 정보 불렛 포인트
         report += f"- 당일 {m['daily']}명\n"
         report += f"- 누적 {m['total']}명\n"
         report += f"- 예매량 {m['ticket']}\n\n"
-    
-    report += "━━━━━━━━━━━━━━━━━━\n"
-    report += "🔗 출처: KOBIS(영화관입장권 통합전산망)"
-    
+    report += "━━━━━━━━━━━━━━━━━━\n🔗 출처: KOBIS(영화관입장권 통합전산망)"
     send_msg(report)
-    print("✅ 리포트 발송 성공!")

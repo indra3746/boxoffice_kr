@@ -1,18 +1,28 @@
 name: Movie Daily Report Bot
+
 on:
   schedule:
-    - cron: '0 23 * * *' # 한국 시간 매일 오전 8시 실행
-  workflow_dispatch: # 수동 실행 버튼
+    # 깃허브 액션은 UTC 기준이므로 한국 시간(KST)보다 9시간 느립니다.
+    # 한국 시간 오전 8시 = UTC 23:00 (전날 밤 11시)
+    - cron: '0 23 * * *'
+  workflow_dispatch: # 직접 버튼을 눌러 테스트할 수 있는 기능을 유지합니다.
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.9'
+
       - name: Install dependencies
-        run: pip install selenium requests pytz webdriver-manager
+        run: |
+          pip install requests selenium webdriver-manager pytz
+
       - name: Execute script
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}

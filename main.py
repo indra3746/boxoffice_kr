@@ -12,7 +12,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# 제목 정규화: 매칭 정확도를 위해 특수문자와 공백을 제거합니다.
+# 제목 정규화: 매칭 성공률을 위해 특수문자와 공백을 제거합니다.
 def clean_title(text):
     if not text: return ""
     clean = text.replace("상세보기", "").strip()
@@ -39,7 +39,7 @@ def get_movie_report():
         
         # 테이블 데이터가 나타날 때까지 대기
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#tbody_0 tr")))
-        time.sleep(15) # 렌더링 완료를 위해 추가 대기
+        time.sleep(20) # 렌더링 완료를 위해 충분히 대기
         
         ticket_map = {}
         t_rows = driver.find_elements(By.CSS_SELECTOR, "#tbody_0 tr")
@@ -54,7 +54,7 @@ def get_movie_report():
         print("📊 2/2 박스오피스 데이터 분석 중...")
         driver.get("https://www.kobis.or.kr/kobis/business/stat/boxs/findDailyBoxOfficeList.do")
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#tbody_0 tr")))
-        time.sleep(10)
+        time.sleep(15)
         
         kst = pytz.timezone('Asia/Seoul')
         today = datetime.now(kst).date()
@@ -105,7 +105,6 @@ def send_msg(content):
     token = os.environ.get('TELEGRAM_TOKEN')
     chat_id = os.environ.get('CHAT_ID')
     if not token or not chat_id:
-        print("❌ 텔레그램 토큰 또는 ID가 설정되지 않았습니다.")
         return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     requests.post(url, json={"chat_id": chat_id, "text": content})
@@ -129,4 +128,5 @@ if movie_list:
     send_msg(report)
     print("✅ 리포트 발송 완료!")
 else:
-    print("⚠️ 데이터를 가져오지 못해 발송을 중단했습니다. 로그를 확인하세요.")
+    print("⚠️ 데이터를 가져오지 못해 발송을 중단했습니다.")
+# --- 끝 ---

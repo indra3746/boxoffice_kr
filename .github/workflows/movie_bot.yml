@@ -1,0 +1,20 @@
+name: Movie Daily Report Bot
+on:
+  schedule:
+    - cron: '0 23 * * *' # 한국 시간 매일 오전 8시 실행
+  workflow_dispatch: # 수동 실행 버튼
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install selenium requests pytz webdriver-manager
+      - name: Execute script
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python main.py

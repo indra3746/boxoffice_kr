@@ -10,7 +10,7 @@ from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
 def get_movie_report():
-    print("🎬 영화 데이터 정밀 추출 엔진 가동...")
+    print("🎬 영화 데이터 정밀 추출 시작...")
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
@@ -22,19 +22,20 @@ def get_movie_report():
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         
-        # 1. 실시간 예매량 페이지 수집
-        print("🎫 1/2 예매량 수집 중 (25초 대기)...")
+        # 1. 예매량 데이터 수집 (예매율 페이지)
+        print("🎫 1/2 실시간 예매량 수집 중 (30초 대기)...")
         driver.get("https://www.kobis.or.kr/kobis/business/stat/boxs/findRealTicketList.do")
-        time.sleep(25) # 예매 테이블은 로딩이 매우 느려 시간을 더 늘렸습니다.
+        time.sleep(30) # 예매 테이블은 로딩이 매우 느려 시간을 대폭 늘렸습니다.
         
         ticket_map = {}
         t_rows = driver.find_elements(By.CSS_SELECTOR, "#tbody_0 tr")
         for row in t_rows:
             cols = row.find_elements(By.TAG_NAME, "td")
             if len(cols) > 4:
-                # 제목에서 공백과 (선택) 문구 제거
-                title_key = cols[1].text.split('\n')[0].strip().replace(" ", "").replace("(선택)", "")
-                # [4]번 칸이 '예매매수'입니다.
+                # 제목에서 공백과 괄호 내용을 제거하여 매칭용 키 생성
+                raw_title = cols[1].text.split('\n')[0].strip()
+                title_key = raw_title.replace(" ", "").split('(')[0]
+                # [4]번 칸이 예매매수입니다.
                 ticket_map[title_key] = cols[4].text.strip()
 
         # 2. 박스오피스 당일/누적 관객수 수집
@@ -50,14 +51,13 @@ def get_movie_report():
         for row in b_rows[:10]:
             cols = row.find_elements(By.TAG_NAME, "td")
             if len(cols) > 10:
-                # 정확한 인덱스 타격 (7번: 당일관객수, 10번: 누적관객수)
+                # 정밀 타격 인덱스: [7]당일관객, [9]누적관객 (10번은 스크린수임 확인됨)
                 rank = cols[0].text.strip()
-                title = cols[1].text.split('\n')[0].strip()
+                original_title = cols[1].text.split('\n')[0].strip()
                 open_date_str = cols[2].text.strip()
                 
-                # 당일 관객수(7번), 누적 관객수(10번)
-                daily_aud = cols[7].text.strip()
-                total_aud = cols[10].text.strip()
+                daily_aud = cols[7].text.strip() # 당일 관객수
+                total_aud = cols[9].text.strip() # 누적 관객수 (사용자님의 1,897은 10번 칸이었음)
                 
                 # D+Day 계산
                 try:
@@ -66,17 +66,17 @@ def get_movie_report():
                     d_day_str = f"개봉 D+{d_day}"
                 except: d_day_str = "개봉일 미정"
                 
-                # 제목 매칭
-                match_key = title.replace(" ", "").replace("(선택)", "")
+                # 제목 매칭 (공백 및 괄호 제거)
+                match_key = original_title.replace(" ", "").split('(')[0]
                 ticket_val = ticket_map.get(match_key, "0")
                 
                 final_data.append({
-                    'rank': rank, 'title': title, 'open': open_date_str,
+                    'rank': rank, 'title': original_title, 'open': open_date_str,
                     'dday': d_day_str, 'daily': daily_aud, 'total': total_aud, 'ticket': ticket_val
                 })
         return final_data
     except Exception as e:
-        print(f"❌ 수집 중 오류: {e}")
+        print(f"❌ 수집 오류: {e}")
         return []
     finally:
         if 'driver' in locals(): driver.quit()

@@ -10,7 +10,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
-# 제목 정규화 함수 (공백 및 특수문자 제거)
+# 제목 정규화 함수 (공백 및 특수문자 제거하여 매칭 확률 높임)
 def normalize_title(text):
     return re.sub(r'[^가-힣A-Za-z0-9]', '', text)
 
@@ -56,12 +56,53 @@ def get_movie_report():
                 rank = cols[0].text.strip()
                 title = cols[1].text.split('\n')[0].strip()
                 open_date_str = cols[2].text.strip()
-                daily_aud = cols[7].text.strip()
-                total_aud = cols[9].text.strip()
+                daily_aud = cols[7].text.strip() # 당일 관객수
+                total_aud = cols[9].text.strip() # 누적 관객수
                 
                 # D+Day 계산
                 try:
                     open_date = datetime.strptime(open_date_str, "%Y-%m-%d").date()
                     d_day = (today - open_date).days + 1
                     d_day_str = f"개봉 D+{d_day}"
-                except: d_day_str = "개봉일 미정"
+                except:
+                    d_day_str = "개봉일 미정"
+                
+                # 제목 정규화 매칭
+                search_key = normalize_title(title)
+                ticket_val = ticket_map.get(search_key, "0")
+                
+                final_data.append({
+                    'rank': rank, 'title': title, 'open': open_date_str,
+                    'dday': d_day_str, 'daily': daily_aud, 'total': total_aud, 'ticket': ticket_val
+                })
+        return final_data
+    except Exception as e:
+        print(f"❌ 오류 발생: {e}")
+        return []
+    finally:
+        if 'driver' in locals():
+            driver.quit()
+
+def send_msg(content):
+    token = os.environ.get('TELEGRAM_TOKEN')
+    chat_id = os.environ.get('CHAT_ID')
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(url, json={"chat_id": chat_id, "text": content})
+
+# --- 실행 및 리포트 구성 ---
+movie_list = get_movie_report()
+kst = pytz.timezone('Asia/Seoul')
+now_str = datetime.now(kst).strftime('%y.%m.%d %H시')
+
+if movie_list:
+    report = f"🎬 일일 박스오피스 및 예매 현황({now_str} 기준)\n"
+    report += "━━━━━━━━━━━━━━━━━━\n"
+    for m in movie_list:
+        # 요청하신 새로운 포맷 적용
+        report += f"{m['rank']}️⃣ {m['title']}\n"
+        report += f"- 개봉일: {m['open']}({m['dday']})\n"
+        report += f"- 당일 {m['daily']}명\n"
+        report += f"- 누적 {m['total']}명\n"
+        report += f"- 예매량 {m['ticket']}\n\n"
+    
+    report += "━━━━━━━━━━━━━━━━━━\n🔗 출처: KOBIS(영화관입장권 통합전

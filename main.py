@@ -10,9 +10,10 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
-# 제목에서 특수문자와 공백을 완전히 제거하는 함수 (매칭 성공률 100%용)
-def clean_title_for_match(text):
-    return re.sub(r'[^가-힣A-Za-z0-9]', '', text)
+# 제목 정규화: 매칭 성공률을 높이기 위해 불필요한 문자를 싹 지웁니다.
+def clean_title(text):
+    if not text: return ""
+    return re.sub(r'[^가-힣A-Za-z0-9]', '', text.split('\n')[0])
 
 def get_movie_report():
     print("🎬 영화 데이터 최종 정밀 수집 엔진 가동...")
@@ -28,20 +29,20 @@ def get_movie_report():
         driver = webdriver.Chrome(service=service, options=options)
         
         # 1. 예매 현황 페이지 접속 (예매관객수 추출)
-        print("🎫 1/2 예매율 페이지 분석 중 (30초 대기)...")
+        print("🎫 1/2 예매율 페이지 분석 중 (35초 대기)...")
         driver.get("https://www.kobis.or.kr/kobis/business/stat/boxs/findRealTicketList.do")
-        time.sleep(30)
+        time.sleep(35) # 데이터가 렌더링될 때까지 충분히 기다립니다.
         
         ticket_map = {}
         t_rows = driver.find_elements(By.CSS_SELECTOR, "#tbody_0 tr")
         for row in t_rows:
             cols = row.find_elements(By.TAG_NAME, "td")
             if len(cols) > 6:
-                # 스크린샷 기준 7번째 칸(Index 6)이 '예매관객수'
-                raw_title = cols[1].text.split('\n')[0].strip()
-                match_key = clean_title_for_match(raw_title)
-                # 예매관객수 데이터 추출
-                ticket_map[match_key] = cols[6].text.strip()
+                # 스크린샷 기준 7번째 칸(Index 6)이 '예매관객수'입니다.
+                raw_title = cols[1].text.strip()
+                match_key = clean_title(raw_title)
+                ticket_count = cols[6].text.strip()
+                ticket_map[match_key] = ticket_count
 
         # 2. 일일 박스오피스 페이지 접속 (당일/누적 관객수 추출)
         print("📊 2/2 박스오피스 데이터 분석 중...")
@@ -56,12 +57,11 @@ def get_movie_report():
         for row in b_rows[:10]:
             cols = row.find_elements(By.TAG_NAME, "td")
             if len(cols) > 9:
-                # 검증된 인덱스: [7]당일관객, [9]누적관객
                 rank = cols[0].text.strip()
                 title = cols[1].text.split('\n')[0].strip()
                 open_date_str = cols[2].text.strip()
-                daily_aud = cols[7].text.strip()
-                total_aud = cols[9].text.strip()
+                daily_aud = cols[7].text.strip() # 당일 관객수
+                total_aud = cols[9].text.strip() # 누적 관객수
                 
                 # D+Day 계산
                 try:
@@ -70,9 +70,13 @@ def get_movie_report():
                     d_day_str = f"개봉 D+{d_day}"
                 except: d_day_str = "개봉일 미정"
                 
-                # 제목 정규화 후 예매량 매칭
-                search_key = clean_title_for_match(title)
-                ticket_val = ticket_map.get(search_key, "0")
+                # 강력한 제목 매칭 로직 (앞부분이 겹치면 매칭)
+                search_key = clean_title(title)
+                ticket_val = "0"
+                for k, v in ticket_map.items():
+                    if search_key in k or k in search_key:
+                        ticket_val = v
+                        break
                 
                 final_data.append({
                     'rank': rank, 'title': title, 'open': open_date_str,
@@ -91,7 +95,7 @@ def send_msg(content):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     requests.post(url, json={"chat_id": chat_id, "text": content})
 
-# --- 실행 및 리포트 구성 ---
+# --- 실행부 ---
 movie_list = get_movie_report()
 kst = pytz.timezone('Asia/Seoul')
 now_str = datetime.now(kst).strftime('%y.%m.%d %H시')
@@ -105,9 +109,6 @@ if movie_list:
         report += f"- 당일 {m['daily']}명\n"
         report += f"- 누적 {m['total']}명\n"
         report += f"- 예매량 {m['ticket']}\n\n"
-    
     report += "━━━━━━━━━━━━━━━━━━\n🔗 출처: KOBIS(영화관입장권 통합전산망)"
     send_msg(report)
     print("✅ 발송 완료!")
-else:
-    print("⚠️ 데이터가 없어 발송하지 않았습니다.")

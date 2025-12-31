@@ -10,7 +10,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
-# 제목 정규화 함수 (공백 및 특수문자 제거)
+# 제목 정규화 함수 (특수문자 및 공백 제거하여 매칭 정확도 향상)
 def normalize_title(text):
     return re.sub(r'[^가-힣A-Za-z0-9]', '', text)
 
@@ -27,21 +27,23 @@ def get_movie_report():
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         
-        # 1. 예매량 데이터 수집 (예매율 페이지)
-        print("🎫 1/2 실시간 예매량 수집 중 (30초 대기)...")
+        # 1. 예매량 데이터 수집 (findRealTicketList.do)
+        print("🎫 1/2 실시간 예매 현황 분석 중 (35초 대기)...")
         driver.get("https://www.kobis.or.kr/kobis/business/stat/boxs/findRealTicketList.do")
-        time.sleep(30)
+        time.sleep(35)
         
         ticket_map = {}
         t_rows = driver.find_elements(By.CSS_SELECTOR, "#tbody_0 tr")
         for row in t_rows:
             cols = row.find_elements(By.TAG_NAME, "td")
-            if len(cols) > 4:
+            if len(cols) > 6:
+                # 스크린샷 확인 결과: 7번째 칸(Index 6)이 '예매관객수'입니다.
                 clean_key = normalize_title(cols[1].text)
-                ticket_map[clean_key] = cols[4].text.strip()
+                ticket_count = cols[6].text.strip() 
+                ticket_map[clean_key] = ticket_count
 
-        # 2. 박스오피스 당일/누적 관객수 수집
-        print("📊 2/2 박스오피스 데이터 수집 중...")
+        # 2. 박스오피스 당일/누적 관객수 수집 (findDailyBoxOfficeList.do)
+        print("📊 2/2 박스오피스 데이터 분석 중...")
         driver.get("https://www.kobis.or.kr/kobis/business/stat/boxs/findDailyBoxOfficeList.do")
         time.sleep(15)
         
@@ -53,12 +55,14 @@ def get_movie_report():
         for row in b_rows[:10]:
             cols = row.find_elements(By.TAG_NAME, "td")
             if len(cols) > 9:
+                # 사용자님 결과 확인 기반 인덱스: [7]당일관객, [9]누적관객
                 rank = cols[0].text.strip()
                 title = cols[1].text.split('\n')[0].strip()
                 open_date_str = cols[2].text.strip()
                 daily_aud = cols[7].text.strip()
                 total_aud = cols[9].text.strip()
                 
+                # D+Day 계산
                 try:
                     open_date = datetime.strptime(open_date_str, "%Y-%m-%d").date()
                     d_day = (today - open_date).days + 1
@@ -66,6 +70,7 @@ def get_movie_report():
                 except:
                     d_day_str = "개봉일 미정"
                 
+                # 제목 정규화 매칭
                 search_key = normalize_title(title)
                 ticket_val = ticket_map.get(search_key, "0")
                 
@@ -104,6 +109,6 @@ if movie_list:
     
     report += "━━━━━━━━━━━━━━━━━━\n🔗 출처: KOBIS(영화관입장권 통합전산망)"
     send_msg(report)
-    print("✅ 발송 완료!")
+    print("✅ 발송 성공!")
 else:
-    print("⚠️ 데이터가 없어 발송하지 않았습니다.")
+    print("⚠️ 수집된 데이터가 없습니다.")

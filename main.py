@@ -1,74 +1,125 @@
 import os
 import sys
 import time
-import datetime
 import requests
+from datetime import datetime, timedelta
+import pytz
 
-# 1. 텔레그램 전송 함수
-def send_telegram(text):
-    token = os.environ.get("TELEGRAM_TOKEN")
-    chat_id = os.environ.get("CHAT_ID")
-    if token and chat_id and len(text) > 10:
-        try:
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True})
-        except Exception as e:
-            print(f"텔레그램 전송 실패: {e}")
-
-# 2. KOBIS 박스오피스 수집 함수
-def fetch_kobis_boxoffice():
-    api_key = os.environ.get("KOBIS_API_KEY")
-    if not api_key:
-        print("⚠️ KOBIS_API_KEY가 설정되지 않았습니다.")
-        sys.exit(1) # 🚨 실패 상태로 종료하여 재시도 유도
-
-    # 한국 시간 기준 어제 날짜 구하기 (KOBIS 일일 박스오피스 기준)
-    now_kst = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)
-    yesterday = (now_kst - datetime.timedelta(days=1)).strftime("%Y%m%d")
+# 1. KOBIS API 수집 함수
+def get_movie_report_api():
+    print("🎬 KOBIS API로 박스오피스 데이터 수집 시작...")
     
-    url = f"http://kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={api_key}&targetDt={yesterday}"
+    # Secrets 우선 적용, 없을 경우 기본 API 키 사용
+    api_key = os.environ.get("KOBIS_API_KEY", "c3f72afa541bc5ffbfaafabe41cc667d")
+    
+    kst = pytz.timezone('Asia/Seoul')
+    today = datetime.now(kst)
+    yesterday = today - timedelta(days=1)
+    target_dt = yesterday.strftime('%Y%m%d')
+    
+    url = f"http://kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={api_key}&targetDt={target_dt}"
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            if 'faultInfo' in data:
+                print(f"❌ API 에러: {data['faultInfo']['message']}")
+                sys.exit(1) # 🚨 GitHub Actions 재시도 유도
+                
+            final_data = []
+            movie_list = data.get('boxOfficeResult', {}).get('dailyBoxOfficeList', [])
+            
+            if not movie_list:
+                print("❌ 박스오피스 데이터가 비어있습니다.")
+                sys.exit(1) # 🚨 GitHub Actions 재시도 유도
+            
+            for m in movie_list[:10]:
+                rank = m['rank']
+                title = m['movieNm']
+                open_date_str = m.get('openDt', '') # YYYY-MM-DD
+                
+                daily_aud = format(int(m.get('audiCnt', 0)), ',')
+                total_aud = format(int(m.get('audiAcc', 0)), ',')
 
-    print(f"🎬 KOBIS API 데이터 수집 시작... (기준일자: {yesterday})")
+                try:
+                    open_date = datetime.strptime(open_date_str, "%Y-%m-%d").date()
+                    d_day = (today.date() - open_date).days
+                    d_day_str = f"개봉 D+{d_day}" if d_day > 0 else "개봉 1일차"
+                except Exception:
+                    d_day_str = "개봉일 미정"
+                    
+                final_data.append({
+                    'rank': rank, 
+                    'title': title, 
+                    'open': open_date_str,
+                    'dday': d_day_str, 
+                    'daily': daily_aud, 
+                    'total': total_aud
+                })
+            return final_data
 
+        except requests.exceptions.Timeout:
+            print(f"⚠️ KOBIS 서버 응답 지연! ({attempt+1}/{max_retries} 재시도 중...)")
+            time.sleep(5)
+        except Exception as e:
+            print(f"❌ 수집 중 오류: {e}")
+            sys.exit(1) # 🚨 오류 발생 시 깃허브 재시도 유도
+
+    # 3번의 타임아웃 재시도 실패 시에도 실패 처리
+    print("❌ KOBIS 서버 타임아웃 초과")
+    sys.exit(1)
+
+# 2. 텔레그램 전송 함수
+def send_msg(content):
+    token = os.environ.get('TELEGRAM_TOKEN')
+    chat_id = os.environ.get('CHAT_ID')
+    
+    if not token or not chat_id:
+        print("❌ 텔레그램 환경 변수(Secrets) 설정 오류")
+        sys.exit(1)
+        
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
-        res = requests.get(url, timeout=15)
-        if res.status_code != 200:
-            print(f"⚠️ KOBIS 응답 에러 (코드: {res.status_code})")
-            sys.exit(1) # 🚨 HTTP 에러 시 실패 상태로 종료
-
-        data = res.json()
-        daily_list = data.get("boxOfficeResult", {}).get("dailyBoxOfficeList", [])
-
-        if not daily_list:
-            print("❌ 수집된 데이터가 없습니다. (KOBIS 업데이트 지연 가능성)")
-            sys.exit(1) # 🚨 데이터가 비어있어도 실패 처리하여 10분 뒤 재시도
-
-        rankings = []
-        for movie in daily_list[:10]:
-            rank = movie.get("rank")
-            movie_nm = movie.get("movieNm")
-            audi_cnt = int(movie.get("audiCnt", 0))
-            rankings.append(f"{rank}위 {movie_nm} (관객수: {audi_cnt:,}명)")
-
-        return rankings
-
+        requests.post(url, json={"chat_id": chat_id, "text": content})
     except Exception as e:
-        print(f"❌ 수집 중 오류 발생: {e}")
-        sys.exit(1) # 🚨 네트워크 접속 실패 시 깃허브 액션 재시도 실행!
+        print(f"❌ 텔레그램 전송 실패: {e}")
 
-# 3. 메인 로직
+# 3. 메인 실행 함수
 def main():
-    now_kst = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)
-    time_str = now_kst.strftime("%y.%m.%d %H:%M")
+    movie_list = get_movie_report_api()
+    
+    kst = pytz.timezone('Asia/Seoul')
+    now = datetime.now(kst)
+    yesterday = now - timedelta(days=1)
+    
+    now_str = now.strftime('%y.%m.%d %H시')
+    target_date_str = f"{yesterday.strftime('%y')}년 {yesterday.month}월 {yesterday.day}일"
 
-    rankings = fetch_kobis_boxoffice()
-
-    msg = f"🍿 **일일 영화 박스오피스 TOP 10 ({time_str})**\n━━━━━━━━━━━━━━━━━━\n\n"
-    msg += "\n".join([f" {x}" for x in rankings]) + "\n\n"
-    msg += "🔗 [KOBIS 공식 홈페이지](https://www.kobis.or.kr)\n"
-
-    send_telegram(msg)
-    print("--- 전송 완료 ---")
+    if movie_list:
+        report = f"🎬 {target_date_str} 일일 박스오피스 현황({now_str} 기준)\n"
+        report += "━━━━━━━━━━━━━━━━━━\n"
+        
+        for m in movie_list:
+            rank_num = int(m['rank'])
+            rank_emoji = f"{rank_num}️⃣" if rank_num < 10 else "🔟"
+            
+            report += f"{rank_emoji} {m['title']}\n"
+            report += f"- 개봉일: {m['open']}({m['dday']})\n"
+            report += f"- 당일 {m['daily']}명\n"
+            report += f"- 누적 {m['total']}명\n\n"
+            
+        report += "━━━━━━━━━━━━━━━━━━\n🔗 출처: KOBIS 오픈 API"
+        
+        print(report)
+        send_msg(report)
+        print("✅ 리포트 발송 완료!")
+    else:
+        print("❌ 전송할 데이터가 없습니다.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

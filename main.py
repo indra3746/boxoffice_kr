@@ -5,7 +5,22 @@ import requests
 from datetime import datetime, timedelta
 import pytz
 
-# 1. KOBIS API 수집 함수
+# 1. 텔레그램 전송 함수 (에러 제보용으로 상단 배치)
+def send_msg(content):
+    token = os.environ.get('TELEGRAM_TOKEN')
+    chat_id = os.environ.get('CHAT_ID')
+    
+    if not token or not chat_id:
+        print("❌ 텔레그램 환경 변수(Secrets) 설정 오류")
+        sys.exit(1)
+        
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        requests.post(url, json={"chat_id": chat_id, "text": content})
+    except Exception as e:
+        print(f"❌ 텔레그램 전송 실패: {e}")
+
+# 2. KOBIS API 수집 함수
 def get_movie_report_api():
     print("🎬 KOBIS API로 박스오피스 데이터 수집 시작...")
     
@@ -26,16 +41,21 @@ def get_movie_report_api():
             response.raise_for_status()
             data = response.json()
             
+            # 🚨 KOBIS API 키 한도 초과 또는 서버 장애 시 텔레그램으로 에러 내용 즉시 제보
             if 'faultInfo' in data:
-                print(f"❌ API 에러: {data['faultInfo']['message']}")
-                sys.exit(1) # 🚨 GitHub Actions 재시도 유도
+                err_msg = f"❌ KOBIS API 에러 발생!\n메시지: {data['faultInfo']['message']}"
+                print(err_msg)
+                send_msg(err_msg)
+                sys.exit(1) # GitHub Actions 재시도 유도
                 
             final_data = []
             movie_list = data.get('boxOfficeResult', {}).get('dailyBoxOfficeList', [])
             
             if not movie_list:
-                print("❌ 박스오피스 데이터가 비어있습니다.")
-                sys.exit(1) # 🚨 GitHub Actions 재시도 유도
+                err_msg = "❌ KOBIS 박스오피스 데이터가 비어있습니다."
+                print(err_msg)
+                send_msg(err_msg)
+                sys.exit(1)
             
             for m in movie_list[:10]:
                 rank = m['rank']
@@ -66,27 +86,14 @@ def get_movie_report_api():
             print(f"⚠️ KOBIS 서버 응답 지연! ({attempt+1}/{max_retries} 재시도 중...)")
             time.sleep(5)
         except Exception as e:
-            print(f"❌ 수집 중 오류: {e}")
-            sys.exit(1) # 🚨 오류 발생 시 깃허브 재시도 유도
+            err_msg = f"❌ KOBIS 수집 중 기타 오류: {e}"
+            print(err_msg)
+            send_msg(err_msg)
+            sys.exit(1)
 
-    # 3번의 타임아웃 재시도 실패 시에도 실패 처리
     print("❌ KOBIS 서버 타임아웃 초과")
+    send_msg("❌ KOBIS 서버 접속 타임아웃 3회 초과")
     sys.exit(1)
-
-# 2. 텔레그램 전송 함수
-def send_msg(content):
-    token = os.environ.get('TELEGRAM_TOKEN')
-    chat_id = os.environ.get('CHAT_ID')
-    
-    if not token or not chat_id:
-        print("❌ 텔레그램 환경 변수(Secrets) 설정 오류")
-        sys.exit(1)
-        
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        requests.post(url, json={"chat_id": chat_id, "text": content})
-    except Exception as e:
-        print(f"❌ 텔레그램 전송 실패: {e}")
 
 # 3. 메인 실행 함수
 def main():
